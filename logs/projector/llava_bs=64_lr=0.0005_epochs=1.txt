@@ -1,0 +1,5 @@
+Starting projector training...
+Loading llava
+Loading CLIP model
+Loading COCO dataset from /fs/cml-datasets/coco/images
+Training projector with model: llava, batch size: 64, learning rate: 0.0005, epochs: 1
