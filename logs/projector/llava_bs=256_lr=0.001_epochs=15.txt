@@ -1,0 +1,81 @@
+Arguments: Namespace(model_name='llava', coco_dir='/fs/cml-datasets/coco/images', cache_path='/fs/nexus-scratch/phoseini/cache/huggingface/hub', save_projector_dir='./projector/models', embeddings_dir='./projector/embeddings', save_emb_batch_size=64, batch_size=256, lr=0.001, epochs=15, seed=42, debug=False)
+Starting projector training...
+Loading llava
+Loading CLIP model
+Training projector with model: llava, batch size: 256, learning rate: 0.001, epochs: 15
+Starting epoch 1/15
+Epoch 1/15, Train Loss: 0.3167
+Validating projector...
+Epoch 1/15, Val Loss: 0.0385
+Saved projector model with loss 0.0385 to ./projector/models/llava_projector.pt
+Starting epoch 2/15
+Epoch 2/15, Train Loss: 0.0098
+Validating projector...
+Epoch 2/15, Val Loss: 0.0010
+Saved projector model with loss 0.0010 to ./projector/models/llava_projector.pt
+Starting epoch 3/15
+Epoch 3/15, Train Loss: 0.0006
+Validating projector...
+Epoch 3/15, Val Loss: 0.0006
+Saved projector model with loss 0.0006 to ./projector/models/llava_projector.pt
+Starting epoch 4/15
+Epoch 4/15, Train Loss: 0.0005
+Validating projector...
+Epoch 4/15, Val Loss: 0.0005
+Saved projector model with loss 0.0005 to ./projector/models/llava_projector.pt
+Starting epoch 5/15
+Epoch 5/15, Train Loss: 0.0005
+Validating projector...
+Epoch 5/15, Val Loss: 0.0005
+Saved projector model with loss 0.0005 to ./projector/models/llava_projector.pt
+Starting epoch 6/15
+Epoch 6/15, Train Loss: 0.0005
+Validating projector...
+Epoch 6/15, Val Loss: 0.0005
+Saved projector model with loss 0.0005 to ./projector/models/llava_projector.pt
+Starting epoch 7/15
+Epoch 7/15, Train Loss: 0.0005
+Validating projector...
+Epoch 7/15, Val Loss: 0.0005
+Saved projector model with loss 0.0005 to ./projector/models/llava_projector.pt
+Starting epoch 8/15
+Epoch 8/15, Train Loss: 0.0004
+Validating projector...
+Epoch 8/15, Val Loss: 0.0005
+Saved projector model with loss 0.0005 to ./projector/models/llava_projector.pt
+Starting epoch 9/15
+Epoch 9/15, Train Loss: 0.0004
+Validating projector...
+Epoch 9/15, Val Loss: 0.0004
+Saved projector model with loss 0.0004 to ./projector/models/llava_projector.pt
+Starting epoch 10/15
+Epoch 10/15, Train Loss: 0.0004
+Validating projector...
+Epoch 10/15, Val Loss: 0.0004
+Saved projector model with loss 0.0004 to ./projector/models/llava_projector.pt
+Starting epoch 11/15
+Epoch 11/15, Train Loss: 0.0004
+Validating projector...
+Epoch 11/15, Val Loss: 0.0004
+Saved projector model with loss 0.0004 to ./projector/models/llava_projector.pt
+Starting epoch 12/15
+Epoch 12/15, Train Loss: 0.0004
+Validating projector...
+Epoch 12/15, Val Loss: 0.0003
+Saved projector model with loss 0.0003 to ./projector/models/llava_projector.pt
+Starting epoch 13/15
+Epoch 13/15, Train Loss: 0.0003
+Validating projector...
+Epoch 13/15, Val Loss: 0.0002
+Saved projector model with loss 0.0002 to ./projector/models/llava_projector.pt
+Starting epoch 14/15
+Epoch 14/15, Train Loss: 0.0004
+Validating projector...
+Epoch 14/15, Val Loss: 0.0003
+Starting epoch 15/15
+Epoch 15/15, Train Loss: 0.0002
+Validating projector...
+Epoch 15/15, Val Loss: 0.0003
+Train losses: [0.3166738125389003, 0.009827540885806929, 0.000602881686503498, 0.0005175436781035418, 0.0004939755002317294, 0.00047200198924434464, 0.00045440529513858725, 0.0004365651637087445, 0.00042335762481152865, 0.0004122764204420576, 0.00040128291641124657, 0.0003776649895956897, 0.0002521363286387988, 0.00042060068561459166, 0.00021075154249239553]
+Val losses: [0.03853498417884112, 0.0009649793588323519, 0.0005555831856327131, 0.0005374633619794622, 0.000503207255678717, 0.0004852735117310658, 0.0004824688658118248, 0.0004517132038017735, 0.000444572776905261, 0.00043545612861635165, 0.00042397459474159406, 0.00034912389528471974, 0.0002299678460985888, 0.0003311977081466466, 0.00027180139732081444]
+Saved loss curve to ./projector/models/llava_projector_loss_curve.png

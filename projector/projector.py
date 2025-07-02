@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 from pathlib import Path
 from PIL import Image
 from torchvision import transforms
+import torch
 
 
 
@@ -43,3 +44,19 @@ class ImageDataset(Dataset):
         image = Image.open(path).convert("RGB")
         # image = self.transform(image)
         return image, path
+    
+
+class CachedEmbeddingDataset(Dataset):
+    def __init__(self, embedding_path):
+        data = torch.load(embedding_path, weights_only=False)
+        self.clip_embs = data["clip"]      # shape: [N, D]
+        self.model_embs = data["model"]    # shape: [N, D]
+        self.paths = data["paths"]          # shape: [N]
+
+        assert self.clip_embs.shape[0] == self.model_embs.shape[0], "Mismatched embedding sizes"
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, idx):
+        return self.clip_embs[idx], self.model_embs[idx]

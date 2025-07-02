@@ -1,6 +1,6 @@
 import argparse
 import os
-from projector.projector import ClipProjector, ImageDataset
+from projector.projector import *
 from utils import *
 from torch.utils.data import DataLoader
 import torch
@@ -21,11 +21,13 @@ def get_args():
     parser.add_argument("--coco_dir", type=str, default="/fs/cml-datasets/coco/images")
     parser.add_argument("--cache_path", type=str, default="/fs/nexus-scratch/phoseini/cache/huggingface/hub")
     parser.add_argument("--save_projector_dir", type=str, default="./projector/models")
+    parser.add_argument("--embeddings_dir", type=str, default="./projector/embeddings")
 
     # Training
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=5e-4)
-    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--save_emb_batch_size", type=int, default=64, help="Batch size for saving embeddings")
+    parser.add_argument("--batch_size", type=int, default=256, help="Batch size for training")
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--epochs", type=int, default=15)
 
     # Others
     parser.add_argument("--seed", type=int, default=42, help="Seed")
@@ -41,6 +43,28 @@ def get_log_name(args):
     return f"{args.model_name}_bs={args.batch_size}_lr={args.lr}_epochs={args.epochs}"
 
 
+@torch.no_grad()
+def save_embeddings(loader, model, processor, clip_model, clip_preprocess, output_path):
+    all_model, all_clip, all_paths = [], [], []
+
+    for images, paths in tqdm(loader, desc=f"Extracting embeddings"):
+        clip_embs = get_clip_image_features(images, clip_model, clip_preprocess)
+        llava_embs = get_llava_image_features(images, model, processor)
+        all_clip.append(clip_embs)
+        all_model.append(llava_embs)
+        all_paths.extend(paths)
+    
+    all_clip_cat = torch.cat(all_clip)
+    all_model_cat = torch.cat(all_model)
+    logger.info(f"Clip embeddings shape: {all_clip_cat.shape}, Model embeddings shape: {all_model_cat.shape}")
+    out = {
+        "clip": all_clip_cat,
+        "model": all_model_cat,
+        "paths": all_paths
+    }
+    torch.save(out, output_path)
+
+    
 
 def train_projector(args):
     logger.info("Starting projector training...")
@@ -51,13 +75,32 @@ def train_projector(args):
     clip_model, clip_preprocess = get_clip_model(args.cache_path)
     clip_model = clip_model.to("cuda").eval()
 
-    logger.info(f"Loading COCO dataset from {args.coco_dir}")
-    train_dataset = ImageDataset(os.path.join(args.coco_dir, "train2017"))
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
-    val_dataset =  ImageDataset(os.path.join(args.coco_dir, "val2017"))
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
+    
 
-    projector = ClipProjector(get_target_dim(args.model_name)).cuda().train()
+    os.makedirs(args.embeddings_dir, exist_ok=True)
+
+    train_embeddings_path = os.path.join(args.embeddings_dir, f"{args.model_name}_train_emb.pt")
+    if not os.path.exists(train_embeddings_path):
+        logger.info(f"Loading COCO train dataset from {args.coco_dir}")
+        train_dataset = ImageDataset(os.path.join(args.coco_dir, "train2017"))
+        train_loader = DataLoader(train_dataset, batch_size=args.save_emb_batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
+        save_embeddings(train_loader, model, processor, clip_model, clip_preprocess,
+                        output_path=train_embeddings_path)
+    
+    val_embeddings_path = os.path.join(args.embeddings_dir, f"{args.model_name}_val_emb.pt")
+    if not os.path.exists(val_embeddings_path):
+        logger.info(f"Loading COCO val dataset from {args.coco_dir}")
+        val_dataset = ImageDataset(os.path.join(args.coco_dir, "val2017"))
+        val_loader = DataLoader(val_dataset, batch_size=args.save_emb_batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
+        save_embeddings(val_loader, model, processor, clip_model, clip_preprocess,
+                        output_path=val_embeddings_path)
+    
+    train_dataset = CachedEmbeddingDataset(train_embeddings_path)
+    val_dataset = CachedEmbeddingDataset(val_embeddings_path)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True)
+
+    projector = ClipProjector(get_target_dim(args.model_name)).cuda()
 
     best_loss = float("inf")
     train_losses = []
@@ -66,12 +109,13 @@ def train_projector(args):
 
     logger.info(f"Training projector with model: {args.model_name}, batch size: {args.batch_size}, learning rate: {args.lr}, epochs: {args.epochs}")
     for epoch in range(args.epochs):
+        logger.info(f"Starting epoch {epoch+1}/{args.epochs}")
+        projector.train()
         total_loss = 0.0
         pbar = tqdm(train_loader)
-        for images, paths in pbar:
-            with torch.no_grad():
-                model_embs = get_llava_image_features(images, model, processor).float()
-                clip_embs = get_clip_image_features(images, clip_model, clip_preprocess).float()
+        for clip_embs, model_embs in pbar:
+            clip_embs = clip_embs.cuda().float()
+            model_embs = model_embs.cuda().float()
             projected_embs = projector(clip_embs)
             loss = F.mse_loss(projected_embs, model_embs)
     
@@ -86,32 +130,35 @@ def train_projector(args):
         logger.info(f"Epoch {epoch+1}/{args.epochs}, Train Loss: {avg_loss:.4f}")
         
         projector.eval()
-        
         val_loss = 0
         pbar = tqdm(val_loader)
-        for images, paths in pbar:
-            with torch.no_grad():
-                model_embs = get_llava_image_features(images, model, processor).float()
-                clip_embs = get_clip_image_features(images, clip_model, clip_preprocess).float()
-            projected_embs = projector(clip_embs)
-            loss = F.mse_loss(projected_embs, model_embs)
-    
-            pbar.set_description(f"Epoch {epoch+1} Val Loss: {loss.item():.4f}")
-            val_loss += loss.item()
-    
-        val_loss = val_loss / len(val_loader)
-        val_losses.append(val_loss)
-        logger.info(f"Epoch {epoch+1}/{args.epochs}, Val Loss: {val_loss:.4f}")
+        logger.info(f"Validating projector...")
+        with torch.no_grad():
+            for clip_embs, model_embs in pbar:
+                clip_embs = clip_embs.cuda().float()
+                model_embs = model_embs.cuda().float()
+                projected_embs = projector(clip_embs)
+                loss = F.mse_loss(projected_embs, model_embs)
         
+                pbar.set_description(f"Epoch {epoch+1} Val Loss: {loss.item():.4f}")
+                val_loss += loss.item()
+    
+            val_loss = val_loss / len(val_loader)
+            val_losses.append(val_loss)
+            logger.info(f"Epoch {epoch+1}/{args.epochs}, Val Loss: {val_loss:.4f}")
             
-        if val_loss < best_loss:
-            best_loss = val_loss
-            torch.save(projector.state_dict(), os.path.join(args.save_projector_dir, get_name(args))+".pt")
-            logger.info(f"Saved best projector model with loss {best_loss:.4f} to {os.path.join(args.save_projector_dir, get_name(args))}.pt")
+                
+            if val_loss < best_loss:
+                best_loss = val_loss
+                torch.save(projector.state_dict(), os.path.join(args.save_projector_dir, get_name(args))+".pt")
+                logger.info(f"Saved projector model with loss {best_loss:.4f} to {os.path.join(args.save_projector_dir, get_name(args))}.pt")
+
     plot_path = os.path.join(args.save_projector_dir, get_name(args) + "_loss_curve.png")
+    logger.info(f"Train losses: {train_losses}")
+    logger.info(f"Val losses: {val_losses}")
     plt.figure(figsize=(16, 9))
-    plt.plot(train_losses, label="Train Loss")
-    plt.plot(val_losses, label="Val Loss")
+    plt.plot(range(1, args.epochs + 1), train_losses, label="Train Loss")
+    plt.plot(range(1, args.epochs + 1), val_losses, label="Val Loss")
     plt.xlabel("Epoch")
     plt.ylabel("MSE Loss")
     plt.title("Projector Loss")
@@ -131,6 +178,7 @@ if __name__ == "__main__":
     # create folder
     os.makedirs(f"logs", exist_ok=True)
     os.makedirs(f"logs/projector", exist_ok=True)
+    os.makedirs(args.save_projector_dir, exist_ok=True)
 
     logging.basicConfig(format="### %(message)s ###")
 
@@ -141,5 +189,7 @@ if __name__ == "__main__":
 
     # Setting Seed
     set_seed(args.seed)
+
+    logger.info(f"Arguments: {args}")
 
     train_projector(args)
