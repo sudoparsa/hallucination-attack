@@ -3,6 +3,7 @@ from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
 import open_clip
 import random
 import numpy as np
+from transformers.utils import is_torchdynamo_compiling
 
 
 def get_llava_image_features(images, model, processor, device="cuda"):
@@ -46,6 +47,36 @@ def get_llava_image_features(images, model, processor, device="cuda"):
     mean_features = torch.stack([f.mean(dim=0) for f in split_features], dim=0)  # [B, D]
 
     return mean_features  # shape: [B, D]
+
+
+def get_llava_inputs(inputs, model, image_features, device="cuda"):
+    """
+    Prepare inputs for LLaVA model using precomputed image features.
+
+    Args:
+        inputs: Preprocessed inputs from LlavaProcessor
+        model: LlavaForConditionalGeneration
+        image_features: Precomputed image features
+
+    Returns:
+        Dict: Inputs ready for model.forward()
+    """
+    inputs = inputs.to(device)
+    inputs_embeds = model.get_input_embeddings()(inputs['input_ids'])
+    special_image_mask = (inputs['input_ids'] == model.config.image_token_index).unsqueeze(-1)
+    special_image_mask = special_image_mask.expand_as(inputs_embeds).to(inputs_embeds.device)
+    if not is_torchdynamo_compiling() and inputs_embeds[special_image_mask].numel() != image_features.numel():
+        n_image_tokens = (inputs['input_ids'] == model.config.image_token_index).sum()
+        n_image_features = image_features.shape[0]
+        raise ValueError(
+            f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+        )
+    image_features = image_features.to(inputs_embeds.device, inputs_embeds.dtype)
+    inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
+
+    inputs['inputs_embeds'] = inputs_embeds
+
+    return inputs
 
 
 def get_target_dim(model_name):
@@ -107,3 +138,42 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)  # if you use multi-GPU
+
+
+
+def get_messages(prompt, image):
+    messages = [
+        {"role": "user", "content": [
+            {"type": "image"},
+            {"type": "text", "text": prompt}
+            ]}
+    ]
+    images = [image]
+    return messages, images
+
+def vllm_standard_preprocessing(processor, prompt, image, **processor_kwargs):
+    messages, images = get_messages(prompt, image)
+    text_prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(
+        text=[text_prompt], images=images, padding=True, return_tensors="pt",
+        **processor_kwargs
+    ).to('cuda')
+    return inputs
+
+def vllm_decoding(inputs, output_ids, processor) -> str:
+    generated_ids = [
+        output_ids[len(input_ids) :]
+        for input_ids, output_ids in zip(inputs.input_ids, output_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+    )
+    return output_text[0]
+
+
+def get_vllm_output(model, processor, prompt, image, max_new_tokens=512):
+    if model == 'gpt-4o':
+        return
+    inputs = vllm_standard_preprocessing(processor, prompt, image)
+    output_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
+    return vllm_decoding(inputs, output_ids, processor)
