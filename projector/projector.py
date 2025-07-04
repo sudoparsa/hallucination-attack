@@ -8,33 +8,47 @@ import torch
 
 
 class ClipProjector(nn.Module):
-    def __init__(self, target_dim, clip_dim=1024):
+    def __init__(self, num_tokens, target_dim, hidden_dim=512, clip_dim=1024):
         super().__init__()
-
-        self.mlp = nn.Sequential(
-            nn.Linear(clip_dim, 2048),
+        self.num_tokens = num_tokens
+        self.target_dim = target_dim
+        self.hidden_mlp = nn.Sequential(
+            nn.Linear(clip_dim, clip_dim),
             nn.GELU(),
-            nn.Linear(2048, 4096),
+            nn.Linear(clip_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(4096, 4096),
-            nn.GELU(),
-            nn.Linear(4096, target_dim),
-            nn.GELU(),    
-            nn.LayerNorm(target_dim)
             )
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, 1024),
+            nn.GELU(),
+            nn.Linear(1024, 2048),
+            nn.GELU(),
+            nn.Linear(2048, target_dim),
+    
+            )
+        
+        # Learnable positional embeddings [1, num_tokens, target_dim]
+        self.pos_emb = nn.Parameter(torch.zeros(1, num_tokens, target_dim))
+        nn.init.trunc_normal_(self.pos_emb, std=0.02)  # Optional: initialization
+
 
     def forward(self, x):
-        x = self.mlp(x)
+        x = self.hidden_mlp(x) # [B, hidden_dim]
+        x = x.unsqueeze(1).repeat(1, self.num_tokens, 1)  # [B, num_tokens, hidden_dim]
+        x = self.mlp(x)  # [B, num_tokens, target_dim]
+        x = x + self.pos_emb
         return x
     
 
 class ImageDataset(Dataset):
-    def __init__(self, image_folder, transform=None):
+    def __init__(self, image_folder, transform=None, resize=None):
         self.image_paths = sorted([p for p in Path(image_folder).glob("*.jpg")])
         if transform is None:
             self.transform = transforms.Compose([
-            transforms.ToTensor()
+            transforms.ToTensor(),
+            transforms.Resize((336, 336)),
         ])
+        self.resize = resize
 
     def __len__(self):
         return len(self.image_paths)
@@ -43,6 +57,8 @@ class ImageDataset(Dataset):
         path = self.image_paths[idx]
         image = Image.open(path).convert("RGB")
         # image = self.transform(image)
+        if self.resize is not None:
+            image = image.resize(self.resize, Image.LANCZOS)
         return image, path
     
 

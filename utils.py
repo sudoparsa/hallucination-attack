@@ -6,7 +6,7 @@ import numpy as np
 from transformers.utils import is_torchdynamo_compiling
 
 
-def get_llava_image_features(images, model, processor, device="cuda"):
+def get_llava_image_features(images, model, processor, avg_pool=False, device="cuda"):
     """
     Extract mean-pooled LLaVA features from a batch of images.
 
@@ -43,6 +43,9 @@ def get_llava_image_features(images, model, processor, device="cuda"):
 
     # Use `feature_lens` to split
     split_features = torch.split(image_features, list(feature_lens), dim=0)
+
+    if not avg_pool:
+        return torch.stack([f for f in split_features], dim=0)  # shape: [B, N_tokens, D]
 
     mean_features = torch.stack([f.mean(dim=0) for f in split_features], dim=0)  # [B, D]
 
