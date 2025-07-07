@@ -1,0 +1,55 @@
+### Arguments: Namespace(model_name='llava', coco_dir='../UMDCollab/COCO', cache_path='../UMDCollab/cache', save_projector_dir='./projector/models2', embeddings_dir='./projector/embeddings', save_emb_batch_size=64, batch_size=8, lr=0.001, epochs=10, online_training=True, seed=42, debug=False) ###
+### Starting projector training... ###
+### Loading llava ###
+Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+Loading checkpoint shards:   0%|          | 0/4 [00:00<?, ?it/s]Loading checkpoint shards:  25%|██▌       | 1/4 [00:00<00:00,  3.07it/s]Loading checkpoint shards:  50%|█████     | 2/4 [00:00<00:00,  2.35it/s]Loading checkpoint shards:  75%|███████▌  | 3/4 [00:01<00:00,  2.30it/s]Loading checkpoint shards: 100%|██████████| 4/4 [00:01<00:00,  3.05it/s]
+### Loading CLIP model ###
+### Using online training, no precomputed embeddings will be used. ###
+### Train dataset size: 118287, Val dataset size: 5000 ###
+### Training projector with model: llava, batch size: 8, learning rate: 0.001, epochs: 10 ###
+### Starting epoch 1/10 ###
+  0%|          | 0/14786 [00:00<?, ?it/s]  0%|          | 0/14786 [00:01<?, ?it/s]
+Traceback (most recent call last):
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/train_projector.py", line 253, in <module>
+    train_projector(args)
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/train_projector.py", line 176, in train_projector
+    model_embs = get_llava_image_features(images, model, processor).cuda().float()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/utils.py", line 68, in get_llava_image_features
+    image_features = model.get_image_features(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/torch/nn/modules/module.py", line 1940, in __getattr__
+    raise AttributeError(
+AttributeError: 'LlavaNextForConditionalGeneration' object has no attribute 'get_image_features'
+Job ID           : 12567354
+Cluster          : spartan
+User/Project     : ayazdanparas/punim2198
+Nodes            : 1
+Wall-clock time  : 00:00:50 / 04:00:00
+
+Displaying overall resources usage from 2025-07-07 20:28:14 to 2025-07-07 20:29:04:
+
+NODE            CPU#        TOT%   ( USR   / SYS   / WIO   / IDLE  ) 
+
+spartan-gpgpu128 : 
+                CPU# 1    : 28.9   (   4.8 /  24.1 /   0.0 /  71.1 ) 
+
+                            UTIL%   MEM-USG-AVG  MEM-USG-MAX  TOT-MEM   
+                GPU# 1    : 1.1      3974.4M      8752.3M     81920.0M 
+
+
+Allocated CPUs            : 1    
+  CPUs with usage <25%    : 0    
+  CPUs with usage <50%    : 1    
+  CPUs with usage >50%    : 0    
+
+
+Allocated GPUs            : 1    
+  GPUs with usage <25%    : 1    
+  GPUs with usage <50%    : 0    
+  GPUs with usage >50%    : 0    
+
+Memory used (RAM)         : 21.3%  [18281MB of 85900MB]
+
+--------------------------------------------
+

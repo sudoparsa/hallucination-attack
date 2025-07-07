@@ -1,0 +1,84 @@
+### Arguments: Namespace(model_name='llava', coco_dir='/fs/cml-datasets/coco/images', cache_path='/fs/nexus-scratch/phoseini/cache/huggingface/hub', save_projector_dir='./projector/models2', embeddings_dir='./projector/embeddings', save_emb_batch_size=64, batch_size=8, lr=0.001, epochs=10, online_training=True, seed=42, debug=False) ###
+### Starting projector training... ###
+### Loading llava ###
+Traceback (most recent call last):
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/utils/hub.py", line 470, in cached_files
+    hf_hub_download(
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/huggingface_hub/utils/_validators.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1008, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/huggingface_hub/file_download.py", line 1125, in _hf_hub_download_to_cache_dir
+    os.makedirs(os.path.dirname(blob_path), exist_ok=True)
+  File "<frozen os>", line 215, in makedirs
+  File "<frozen os>", line 215, in makedirs
+  File "<frozen os>", line 215, in makedirs
+  [Previous line repeated 4 more times]
+  File "<frozen os>", line 225, in makedirs
+PermissionError: [Errno 13] Permission denied: '/fs'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/train_projector.py", line 253, in <module>
+    train_projector(args)
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/train_projector.py", line 123, in train_projector
+    model, processor = get_model(args.model_name, args.cache_path)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/hallucination-attack/utils.py", line 198, in get_model
+    processor = LlavaNextProcessor.from_pretrained(model_id, cache_dir=cache_path)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/processing_utils.py", line 1185, in from_pretrained
+    args = cls._get_arguments_from_pretrained(pretrained_model_name_or_path, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/processing_utils.py", line 1248, in _get_arguments_from_pretrained
+    args.append(attribute_class.from_pretrained(pretrained_model_name_or_path, **kwargs))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py", line 467, in from_pretrained
+    raise initial_exception
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/models/auto/image_processing_auto.py", line 454, in from_pretrained
+    config_dict, _ = ImageProcessingMixin.get_image_processor_dict(
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/image_processing_base.py", line 340, in get_image_processor_dict
+    resolved_image_processor_file = cached_file(
+                                    ^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/utils/hub.py", line 312, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/data/gpfs/projects/punim2198/Aryan/UMDCollab/virtualenv/Python3.11.3/lib/python3.11/site-packages/transformers/utils/hub.py", line 515, in cached_files
+    raise OSError(
+OSError: PermissionError at /fs when downloading llava-hf/llava-v1.6-mistral-7b-hf. Check cache directory permissions. Common causes: 1) another user is downloading the same model (please wait); 2) a previous download was canceled and the lock file needs manual removal.
+Job ID           : 12567237
+Cluster          : spartan
+User/Project     : ayazdanparas/punim2198
+Nodes            : 1
+Wall-clock time  : 00:00:51 / 04:00:00
+
+Displaying overall resources usage from 2025-07-07 20:24:43 to 2025-07-07 20:25:34:
+
+NODE            CPU#        TOT%   ( USR   / SYS   / WIO   / IDLE  ) 
+
+spartan-gpgpu128 : 
+                CPU# 1    : 7.2    (   4.8 /   2.4 /   0.0 /  92.8 ) 
+
+                            UTIL%   MEM-USG-AVG  MEM-USG-MAX  TOT-MEM   
+                GPU# 1    : 0.0       882.0M       882.0M     81920.0M 
+
+
+Allocated CPUs            : 1    
+  CPUs with usage <25%    : 1    
+  CPUs with usage <50%    : 0    
+  CPUs with usage >50%    : 0    
+
+
+Allocated GPUs            : 1    
+  GPUs with usage <25%    : 1    
+  GPUs with usage <50%    : 0    
+  GPUs with usage >50%    : 0    
+
+Memory used (RAM)         : 0.6%  [503MB of 85900MB]
+
+--------------------------------------------
+

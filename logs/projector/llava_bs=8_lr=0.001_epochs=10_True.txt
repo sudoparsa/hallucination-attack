@@ -1,0 +1,4 @@
+Arguments: Namespace(model_name='llava', coco_dir='../UMDCollab/COCO', cache_path='../UMDCollab/cache', save_projector_dir='./projector/models2', embeddings_dir='./projector/embeddings', save_emb_batch_size=64, batch_size=8, lr=0.001, epochs=10, online_training=True, seed=42, debug=False)
+Starting projector training...
+Loading llava
+Loading CLIP model

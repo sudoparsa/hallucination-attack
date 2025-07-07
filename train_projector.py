@@ -65,6 +65,57 @@ def save_embeddings(loader, model, processor, clip_model, clip_preprocess, outpu
     }
     torch.save(out, output_path)
 
+def train_transformer(args):
+    logger.info("Starting projector training...")
+    decoder = CLS2TokensDecoder().cuda()
+    
+    logger.info(f"Loading {args.model_name}")
+    model, processor = get_model(args.model_name, args.cache_path)
+    model = model.to("cuda").eval()
+    logger.info(f"Loading CLIP model")
+    clip_model, clip_preprocess = get_clip_model(args.cache_path)
+    clip_model = clip_model.to("cuda").eval()
+    optimizer = torch.optim.AdamW(decoder.parameters(), lr=1e-3)
+    train_dataset = ImageDataset(os.path.join(args.coco_dir, "train2017"), resize=(336, 336))
+    val_dataset = ImageDataset(os.path.join(args.coco_dir, "val2017"), resize=(336, 336))
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
+
+
+    criterion = nn.MSELoss()   
+    
+    best_val_loss = float("inf")
+    for epoch in range(args.epochs):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
+        decoder.train()
+        for images, _ in pbar:
+            with torch.no_grad():
+                cls_h = get_clip_image_features(images, clip_model, clip_preprocess)
+                tokens_l = get_llava_image_tokens(images, model, processor)    
+            pred_tokens = decoder(cls_h).half()     
+            loss = criterion(pred_tokens, tokens_l)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            pbar.set_postfix({"loss": loss.item()})
+        total_val_loss = 0.0
+        decoder.eval()
+        for images, _ in val_loader:   
+            with torch.no_grad():
+                cls_h = get_clip_cls(images, clip_preprocess)
+                tokens_l = get_llava_image_tokens(images, model, processor)
+                pred_tokens = decoder(cls_h).half()
+                val_loss = criterion(pred_tokens, tokens_l)
+                total_val_loss += val_loss.item()
+
+        avg_val_loss = total_val_loss / len(val_loader)
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(decoder.state_dict(), "best_decoder.pth")
+        print(f"Epoch {epoch} - Validation Loss: {avg_val_loss:.4f}")
+              
+
     
 
 def train_projector(args):
@@ -200,4 +251,4 @@ if __name__ == "__main__":
 
     logger.info(f"Arguments: {args}")
 
-    train_projector(args)
+    train_transformer(args)
