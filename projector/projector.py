@@ -28,15 +28,15 @@ class ClipProjector(nn.Module):
             )
         
         # Learnable positional embeddings [1, num_tokens, target_dim]
-        self.pos_emb = nn.Parameter(torch.zeros(1, num_tokens, target_dim))
+        self.pos_emb = nn.Parameter(torch.zeros(1, num_tokens, hidden_dim))
         nn.init.trunc_normal_(self.pos_emb, std=0.02)  # Optional: initialization
 
 
     def forward(self, x):
         x = self.hidden_mlp(x) # [B, hidden_dim]
         x = x.unsqueeze(1).repeat(1, self.num_tokens, 1)  # [B, num_tokens, hidden_dim]
-        x = self.mlp(x)  # [B, num_tokens, target_dim]
         x = x + self.pos_emb
+        x = self.mlp(x)  # [B, num_tokens, target_dim]
         return x
     
 
