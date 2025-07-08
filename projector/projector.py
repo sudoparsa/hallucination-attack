@@ -6,6 +6,28 @@ from torchvision import transforms
 import torch
 
 
+class CLS2TokensDecoder(nn.Module):
+    def __init__(self, output_tokens=576, dim=1024, num_layers=4, num_heads=8, hidden_dim=2048):
+        super().__init__()       
+        self.output_tokens = output_tokens
+        self.dim = dim       
+        self.queries = nn.Parameter(torch.randn(output_tokens, dim))
+        self.decoder = nn.TransformerDecoder(
+            nn.TransformerDecoderLayer(d_model=dim, nhead=num_heads, dim_feedforward=hidden_dim),
+            num_layers=num_layers
+        )
+        
+    def forward(self, cls):
+        """
+        cls: [B, dim]
+        """
+        B = cls.shape[0]
+        memory = cls.unsqueeze(0) 
+        q = self.queries.unsqueeze(1).repeat(1,B,1)  
+        out = self.decoder(q, memory) 
+        out = out.permute(1,0,2)    
+        return out
+
 
 class ClipProjector(nn.Module):
     def __init__(self, num_tokens, target_dim, hidden_dim=512, clip_dim=1024):

@@ -5,6 +5,44 @@ import random
 import numpy as np
 from transformers.utils import is_torchdynamo_compiling
 
+from transformers.image_processing_utils import select_best_resolution
+
+def get_llava_image_tokens(images, model, processor, device="cuda"):
+    # Preprocess all images
+    inputs = processor.image_processor(images=images, return_tensors="pt")
+    pixel_values = inputs["pixel_values"].to(device)      
+    image_sizes = inputs["image_sizes"].to(device)      
+    batch_size = pixel_values.shape[0]
+    vision_feature_layer = model.config.vision_feature_layer
+    vision_feature_select_strategy = model.config.vision_feature_select_strategy
+    image_num_patches = [
+            llava_image_size_to_num_patches(
+                image_size=imsize,
+                grid_pinpoints=model.model.config.image_grid_pinpoints,
+                patch_size=model.model.config.vision_config.image_size,
+            )
+            for imsize in image_sizes
+        ]
+
+    if pixel_values.dim() == 5:
+            _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
+            pixel_values = torch.cat(_pixel_values_list, dim=0)
+        
+    image_features = model.model.vision_tower(pixel_values,output_hidden_states=True)
+    
+    if isinstance(vision_feature_layer, int):
+        selected_image_feature = image_features.hidden_states[vision_feature_layer]
+        
+    else:
+        hs_pool = [image_features.hidden_states[layer_idx] for layer_idx in vision_feature_layer]
+        selected_image_feature = torch.cat(hs_pool, dim=-1)
+    selected_image_crops = []
+    for i in range(batch_size):
+        selected_image_crops.append(selected_image_feature[i*3, 1:,:])
+
+    selected_image_crops = torch.stack(selected_image_crops)
+    return selected_image_crops
+
 
 def get_llava_image_features(images, model, processor, avg_pool=False, device="cuda"):
     """
@@ -98,6 +136,42 @@ def get_target_dim(model_name):
         return 3584  # Qwen feature dimension
     else:
         raise ValueError(f"Unknown model name: {model_name}")
+
+def llava_image_size_to_num_patches(image_size, grid_pinpoints, patch_size: int):
+    """
+    Calculate the number of patches after the preprocessing for images of any resolution.
+
+    Args:
+        image_size (`torch.LongTensor` or `np.ndarray` or `tuple[int, int]`):
+            The size of the input image in the format (height, width). ?
+        grid_pinpoints (`List`):
+            A list containing possible resolutions. Each item in the list should be a tuple or list
+            of the form `(height, width)`.
+        patch_size (`int`):
+            The size of each image patch.
+
+    Returns:
+        int: the number of patches
+    """
+    if not isinstance(grid_pinpoints, list):
+        raise TypeError("grid_pinpoints should be a list of tuples or lists")
+
+    # ! VERY IMPORTANT if image_size is tensor, must convert to into tuple, otherwise it will cause wrong calculate
+    if not isinstance(image_size, (list, tuple)):
+        if not isinstance(image_size, (torch.Tensor, np.ndarray)):
+            raise TypeError(f"image_size invalid type {type(image_size)} with value {image_size}")
+        image_size = image_size.tolist()
+
+    best_resolution = select_best_resolution(image_size, grid_pinpoints)
+    height, width = best_resolution
+    num_patches = 0
+    # consider change to ceil(height/patch_size)*ceil(width/patch_size) + 1
+    for i in range(0, height, patch_size):
+        for j in range(0, width, patch_size):
+            num_patches += 1
+    # add the base patch
+    num_patches += 1
+    return num_patches
 
 def get_clip_image_features(images, clip_model, clip_preprocess):
     """
