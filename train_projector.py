@@ -103,7 +103,7 @@ def train_transformer(args):
         decoder.eval()
         for images, _ in val_loader:   
             with torch.no_grad():
-                cls_h = get_clip_cls(images, clip_preprocess)
+                cls_h = get_clip_image_features(images, clip_preprocess)
                 tokens_l = get_llava_image_tokens(images, model, processor)
                 pred_tokens = decoder(cls_h).half()
                 val_loss = criterion(pred_tokens, tokens_l)

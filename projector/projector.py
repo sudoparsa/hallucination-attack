@@ -11,21 +11,24 @@ class CLS2TokensDecoder(nn.Module):
         super().__init__()       
         self.output_tokens = output_tokens
         self.dim = dim       
-        self.queries = nn.Parameter(torch.randn(output_tokens, dim))
+        # self.queries = nn.Parameter(torch.randn(output_tokens, dim))
+        self.queries = nn.Parameter(torch.zeros(1, output_tokens, dim))
+        # nn.init.trunc_normal_(self.queries, std=0.02)
         self.decoder = nn.TransformerDecoder(
-            nn.TransformerDecoderLayer(d_model=dim, nhead=num_heads, dim_feedforward=hidden_dim),
+            nn.TransformerDecoderLayer(d_model=dim, nhead=num_heads, dim_feedforward=hidden_dim, batch_first=True),
             num_layers=num_layers
         )
+        self.pos_emb = nn.Parameter(torch.zeros(1, output_tokens, dim))
+        nn.init.trunc_normal_(self.pos_emb, std=0.02)
         
     def forward(self, cls):
         """
         cls: [B, dim]
         """
-        B = cls.shape[0]
-        memory = cls.unsqueeze(0) 
-        q = self.queries.unsqueeze(1).repeat(1,B,1)  
-        out = self.decoder(q, memory) 
-        out = out.permute(1,0,2)    
+        B = cls.size(0)
+        memory = cls.unsqueeze(1)             # [B, 1, D]
+        queries = self.queries.repeat(B, 1, 1) + self.pos_emb  # [B, T, D]
+        out = self.decoder(queries, memory)   # [B, T, D]
         return out
 
 

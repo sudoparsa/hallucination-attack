@@ -18,8 +18,8 @@ def get_llava_image_tokens(images, model, processor, device="cuda"):
     image_num_patches = [
             llava_image_size_to_num_patches(
                 image_size=imsize,
-                grid_pinpoints=model.model.config.image_grid_pinpoints,
-                patch_size=model.model.config.vision_config.image_size,
+                grid_pinpoints=model.config.image_grid_pinpoints,
+                patch_size=model.config.vision_config.image_size,
             )
             for imsize in image_sizes
         ]
@@ -28,7 +28,7 @@ def get_llava_image_tokens(images, model, processor, device="cuda"):
             _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
             pixel_values = torch.cat(_pixel_values_list, dim=0)
         
-    image_features = model.model.vision_tower(pixel_values,output_hidden_states=True)
+    image_features = model.vision_tower(pixel_values,output_hidden_states=True)
     
     if isinstance(vision_feature_layer, int):
         selected_image_feature = image_features.hidden_states[vision_feature_layer]
