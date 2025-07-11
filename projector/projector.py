@@ -7,7 +7,7 @@ import torch
 
 
 class CLS2TokensDecoder(nn.Module):
-    def __init__(self, output_tokens=576, dim=1024, num_layers=4, num_heads=8, hidden_dim=2048):
+    def __init__(self, output_tokens=576, dim=1024, num_layers=4, num_heads=8, hidden_dim=4096):
         super().__init__()       
         self.output_tokens = output_tokens
         self.dim = dim       
@@ -20,17 +20,38 @@ class CLS2TokensDecoder(nn.Module):
         )
         self.pos_emb = nn.Parameter(torch.zeros(1, output_tokens, dim))
         nn.init.trunc_normal_(self.pos_emb, std=0.02)
+
+        self.project_memory = nn.Linear(dim, dim)
         
     def forward(self, cls):
         """
         cls: [B, dim]
         """
         B = cls.size(0)
-        memory = cls.unsqueeze(1)             # [B, 1, D]
-        queries = self.queries.repeat(B, 1, 1) + self.pos_emb  # [B, T, D]
+        memory = self.project_memory(cls).unsqueeze(1)             # [B, 1, D]
+        # queries = self.queries + self.pos_emb 
+        queries = self.queries.repeat(B, 1, 1) # [B, T, D]
         out = self.decoder(queries, memory)   # [B, T, D]
         return out
 
+
+class TokenMLP(nn.Module):
+    def __init__(self, clip_dim=1024, context_dim=128, hidden_dim=2048, num_tokens=576):
+        super().__init__()
+        self.token_emb = nn.Parameter(torch.randn(1, num_tokens, context_dim))
+        self.mlp = nn.Sequential(
+            nn.Linear(clip_dim + context_dim, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, clip_dim),
+        )
+
+    def forward(self, clip_vec):
+        # clip_vec: [B, 1024]
+        B = clip_vec.size(0)
+        tokens = self.token_emb.expand(B, -1, -1)
+        clip_vec = clip_vec.unsqueeze(1).expand(-1, tokens.size(1), -1)
+        x = torch.cat([clip_vec, tokens], dim=-1)  # [B, T, 2D]
+        return self.mlp(x)  # [B, T, D]
 
 class ClipProjector(nn.Module):
     def __init__(self, num_tokens, target_dim, hidden_dim=512, clip_dim=1024):
