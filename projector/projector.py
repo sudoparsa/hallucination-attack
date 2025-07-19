@@ -36,13 +36,13 @@ class CLS2TokensDecoder(nn.Module):
 
 
 class TokenMLP(nn.Module):
-    def __init__(self, clip_dim=1024, context_dim=128, hidden_dim=2048, num_tokens=576):
+    def __init__(self, clip_dim=1024, context_dim=4096, num_tokens=1176, hidden_dim=2048, target_dim=4096):
         super().__init__()
         self.token_emb = nn.Parameter(torch.randn(1, num_tokens, context_dim))
         self.mlp = nn.Sequential(
             nn.Linear(clip_dim + context_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, clip_dim),
+            nn.Linear(hidden_dim, target_dim),
         )
 
     def forward(self, clip_vec):

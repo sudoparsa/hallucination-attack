@@ -37,6 +37,7 @@ def get_llava_image_tokens(images, model, processor, device="cuda"):
         hs_pool = [image_features.hidden_states[layer_idx] for layer_idx in vision_feature_layer]
         selected_image_feature = torch.cat(hs_pool, dim=-1)
     selected_image_crops = []
+
     for i in range(batch_size):
         selected_image_crops.append(selected_image_feature[i*3, 1:,:])
 
@@ -175,7 +176,7 @@ def llava_image_size_to_num_patches(image_size, grid_pinpoints, patch_size: int)
 
 def get_clip_image_features(images, clip_model, clip_preprocess):
     """
-    Extract mean-pooled CLIP features from a batch of images.
+    Extract CLIP features from a batch of images.
 
     Args:
         images: List of PIL images

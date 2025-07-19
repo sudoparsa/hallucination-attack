@@ -2,7 +2,7 @@ import argparse
 import os
 from projector.projector import *
 from utils import *
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import torch
 from tqdm import tqdm
 import torch.nn.functional as F
@@ -20,15 +20,18 @@ def get_args():
     parser.add_argument("--model_name", type=str, default="llava", choices=["qwen", "llava"], help="model name")
     parser.add_argument("--coco_dir", type=str, default="/fs/cml-datasets/coco/images")
     parser.add_argument("--cache_path", type=str, default="/fs/nexus-scratch/phoseini/cache/huggingface/hub")
-    parser.add_argument("--save_projector_dir", type=str, default="./projector/models2")
+    parser.add_argument("--save_projector_dir", type=str, default="./projector/models3")
     parser.add_argument("--embeddings_dir", type=str, default="./projector/embeddings")
 
     # Training
     parser.add_argument("--save_emb_batch_size", type=int, default=64, help="Batch size for saving embeddings")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size for training")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--online_training", action="store_true", help="If set, will train projector online instead of using precomputed embeddings")
+    parser.add_argument("--context_dim", type=int, default=1024, help="Context dimension for the projector")
+    parser.add_argument("--hidden_dim", type=int, default=2048, help="Hidden dimension for the projector")
+    parser.add_argument("--no_selected_tokens", type=int, default=32, help="Number of tokens to select for training")
+    parser.add_argument("--coco_subset", type=float, default=0.1, help="Fraction of COCO dataset to use for training (1.0 means full dataset)")
 
     # Others
     parser.add_argument("--seed", type=int, default=42, help="Seed")
@@ -41,7 +44,7 @@ def get_name(args):
     return f"{args.model_name}_projector"
 
 def get_log_name(args):
-    return f"{args.model_name}_bs={args.batch_size}_lr={args.lr}_epochs={args.epochs}_{args.online_training}"
+    return f"{args.model_name}_bs={args.batch_size}_lr={args.lr}_epochs={args.epochs}_context_dim={args.context_dim}_hidden_dim={args.hidden_dim}_coco_subset={args.coco_subset}"
 
 
 @torch.no_grad()
@@ -67,54 +70,105 @@ def save_embeddings(loader, model, processor, clip_model, clip_preprocess, outpu
 
 def train_transformer(args):
     logger.info("Starting projector training...")
-    decoder = CLS2TokensDecoder().cuda()
-    
+    # decoder = CLS2TokensDecoder().cuda()
+    decoder = TokenMLP(context_dim=args.context_dim, hidden_dim=args.hidden_dim).cuda()
+    logger.info(f"Decoder: {decoder}")
+
     logger.info(f"Loading {args.model_name}")
     model, processor = get_model(args.model_name, args.cache_path)
     model = model.to("cuda").eval()
     logger.info(f"Loading CLIP model")
     clip_model, clip_preprocess = get_clip_model(args.cache_path)
     clip_model = clip_model.to("cuda").eval()
-    optimizer = torch.optim.AdamW(decoder.parameters(), lr=1e-3)
+    optimizer = torch.optim.AdamW(decoder.parameters(), lr=args.lr)
     train_dataset = ImageDataset(os.path.join(args.coco_dir, "train2017"), resize=(336, 336))
+    indices = random.sample(range(len(train_dataset)), int(args.coco_subset * len(train_dataset)))  # Use subset of the dataset for training
+    train_dataset = Subset(train_dataset, indices)
+    logger.info(f"Train dataset size: {len(train_dataset)}")
     val_dataset = ImageDataset(os.path.join(args.coco_dir, "val2017"), resize=(336, 336))
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=lambda x: list(zip(*x)))
-
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=lambda x: list(zip(*x)))
 
     criterion = nn.MSELoss()   
     
     best_val_loss = float("inf")
-    for epoch in range(args.epochs):
+    train_losses = []
+    val_losses = []
+    for epoch in range(1, args.epochs+1):
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
         decoder.train()
-        for images, _ in pbar:
+        total_tr_loss = 0
+        epoch_losses = []
+        for i, (images, _) in enumerate(pbar):
             with torch.no_grad():
                 cls_h = get_clip_image_features(images, clip_model, clip_preprocess)
-                tokens_l = get_llava_image_tokens(images, model, processor)    
-            pred_tokens = decoder(cls_h).half()     
+                tokens_l = get_llava_image_features(images, model, processor)
+            pred_tokens = decoder(cls_h).half()
             loss = criterion(pred_tokens, tokens_l)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
-            pbar.set_postfix({"loss": loss.item()})
+            total_tr_loss += loss.item()
+            pbar.set_postfix({"loss": loss.item(), "total_loss": total_tr_loss / (i + 1)})
+            epoch_losses.append(loss.item())
+        avg_train_loss = total_tr_loss / len(train_loader)
+        logger.info(f"Epoch {epoch} - Train Loss: {sum(epoch_losses) / len(epoch_losses)}")
+        train_losses.append(avg_train_loss)
+
         total_val_loss = 0.0
         decoder.eval()
-        for images, _ in val_loader:   
+        pbar = tqdm(val_loader, desc=f"Validating epoch {epoch}")
+        for i, (images, _) in enumerate(pbar):   
             with torch.no_grad():
-                cls_h = get_clip_image_features(images, clip_preprocess)
-                tokens_l = get_llava_image_tokens(images, model, processor)
+                cls_h = get_clip_image_features(images, clip_model, clip_preprocess)
+                tokens_l = get_llava_image_features(images, model, processor)
                 pred_tokens = decoder(cls_h).half()
+                # B, T, D = pred_tokens.shape
+                # token_idx = torch.randint(0, T, (B, args.no_selected_tokens), device=pred_tokens.device)  # [B, 32]
+                # batch_idx = torch.arange(B, device=pred_tokens.device).unsqueeze(1)  # [B, 1]
+                # pred_sample = pred_tokens[batch_idx, token_idx]  # [B, 32, D]
+                # target_sample = tokens_l[batch_idx, token_idx]   # [B, 32, D]
+                # val_loss = criterion(pred_sample, target_sample)
                 val_loss = criterion(pred_tokens, tokens_l)
                 total_val_loss += val_loss.item()
-
+            
+            pbar.set_postfix({"val_loss": val_loss.item(), "total_val_loss": total_val_loss / (i + 1)})
+        
+        logger.info(f"Epoch {epoch} - Validation Loss: {total_val_loss / len(val_loader)}")
         avg_val_loss = total_val_loss / len(val_loader)
+        val_losses.append(avg_val_loss)
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
-            torch.save(decoder.state_dict(), "best_decoder.pth")
-        print(f"Epoch {epoch} - Validation Loss: {avg_val_loss:.4f}")
-              
+            torch.save(decoder.state_dict(), os.path.join(args.save_projector_dir, get_log_name(args))+".pt")
+            logger.info(f"Saved projector model with loss {best_val_loss} to {os.path.join(args.save_projector_dir, get_log_name(args))}.pt")
+        
+    plot_path = os.path.join(args.save_projector_dir, get_log_name(args) + "_loss_curve.png")
+    logger.info(f"Train losses: {train_losses}")
+    logger.info(f"Val losses: {val_losses}")
+
+    plt.figure(figsize=(18, 6))
+
+    # Train Loss subplot
+    plt.subplot(1, 2, 1)
+    plt.plot(range(1, len(train_losses) + 1), train_losses, label="Train Loss", color="blue")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE Loss")
+    plt.title("Train Loss")
+    plt.grid(True)
+
+    # Val Loss subplot
+    plt.subplot(1, 2, 2)
+    plt.plot(range(1, len(val_losses) + 1), val_losses, label="Val Loss", color="green")
+    plt.xlabel("Epoch")
+    plt.ylabel("MSE Loss")
+    plt.title("Validation Loss")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(plot_path)
+    plt.close()
+    logger.info(f"Saved loss curve to {plot_path}")
+    logger.info(f"Training completed. Best validation loss: {best_val_loss}")
 
     
 
