@@ -4,8 +4,9 @@ import open_clip
 import random
 import numpy as np
 from transformers.utils import is_torchdynamo_compiling
-
+from diffusers import DiffusionPipeline
 from transformers.image_processing_utils import select_best_resolution
+
 
 def get_llava_image_tokens(images, model, processor, device="cuda"):
     # Preprocess all images
@@ -117,8 +118,18 @@ def get_llava_inputs(inputs, model, image_features, device="cuda"):
     inputs_embeds = inputs_embeds.masked_scatter(special_image_mask, image_features)
 
     inputs['inputs_embeds'] = inputs_embeds
+    inputs['pixel_values'] = None
 
     return inputs
+
+
+def get_model_inputs(model_name, inputs, model, image_features, device="cuda"):
+    if model_name == "llava":
+        return get_llava_inputs(inputs, model, image_features, device=device)
+    elif model_name == "qwen":
+        pass
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
 
 
 def get_target_dim(model_name):
@@ -255,3 +266,36 @@ def get_vllm_output(model, processor, prompt, image, max_new_tokens=512):
     inputs = vllm_standard_preprocessing(processor, prompt, image)
     output_ids = model.generate(**inputs, max_new_tokens=max_new_tokens)
     return vllm_decoding(inputs, output_ids, processor)
+
+
+
+def get_num_tokens(model_name):
+    if model_name == "llava":
+        return 1176, 4096
+    elif model_name == "qwen":
+        return 64, 4096
+    else:
+        raise ValueError(f"Unknown model name: {model_name}")
+
+
+def get_diffusion_model(cache_path):
+    pipe = DiffusionPipeline.from_pretrained(
+        "stabilityai/stable-diffusion-2-1-unclip",
+        torch_dtype=torch.float16,
+        cache_dir=cache_path,
+    ).to("cuda")
+    return pipe
+
+
+def get_prompt_templates():
+    templates = [
+        "Do you see a {obj} in the image?",
+        "Is there a {obj} here?",
+        "Does the image contain a {obj}?",
+        "Can you find a {obj} in this picture?",
+        "Would you say there's a {obj} here?",
+        "Is a {obj} present in this image?",
+        ]
+    return templates
+
+

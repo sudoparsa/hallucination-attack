@@ -5,7 +5,6 @@ from PIL import Image
 from torchvision import transforms
 import torch
 
-
 class CLS2TokensDecoder(nn.Module):
     def __init__(self, output_tokens=576, dim=1024, num_layers=4, num_heads=8, hidden_dim=4096):
         super().__init__()       
