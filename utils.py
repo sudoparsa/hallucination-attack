@@ -1,49 +1,12 @@
 import torch
 from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import open_clip
 import random
 import numpy as np
 from transformers.utils import is_torchdynamo_compiling
 from diffusers import DiffusionPipeline
 from transformers.image_processing_utils import select_best_resolution
-
-
-def get_llava_image_tokens(images, model, processor, device="cuda"):
-    # Preprocess all images
-    inputs = processor.image_processor(images=images, return_tensors="pt")
-    pixel_values = inputs["pixel_values"].to(device)      
-    image_sizes = inputs["image_sizes"].to(device)      
-    batch_size = pixel_values.shape[0]
-    vision_feature_layer = model.config.vision_feature_layer
-    vision_feature_select_strategy = model.config.vision_feature_select_strategy
-    image_num_patches = [
-            llava_image_size_to_num_patches(
-                image_size=imsize,
-                grid_pinpoints=model.config.image_grid_pinpoints,
-                patch_size=model.config.vision_config.image_size,
-            )
-            for imsize in image_sizes
-        ]
-
-    if pixel_values.dim() == 5:
-            _pixel_values_list = [pix_val[:num_patch] for pix_val, num_patch in zip(pixel_values, image_num_patches)]
-            pixel_values = torch.cat(_pixel_values_list, dim=0)
-        
-    image_features = model.vision_tower(pixel_values,output_hidden_states=True)
-    
-    if isinstance(vision_feature_layer, int):
-        selected_image_feature = image_features.hidden_states[vision_feature_layer]
-        
-    else:
-        hs_pool = [image_features.hidden_states[layer_idx] for layer_idx in vision_feature_layer]
-        selected_image_feature = torch.cat(hs_pool, dim=-1)
-    selected_image_crops = []
-
-    for i in range(batch_size):
-        selected_image_crops.append(selected_image_feature[i*3, 1:,:])
-
-    selected_image_crops = torch.stack(selected_image_crops)
-    return selected_image_crops
 
 
 def get_llava_image_features(images, model, processor, avg_pool=False, device="cuda"):
@@ -57,7 +20,7 @@ def get_llava_image_features(images, model, processor, avg_pool=False, device="c
         device: "cuda" or "cpu"
 
     Returns:
-        Tensor of shape [B, D]: one feature vector per image
+        Tensor of shape [B, N_tokens, D] 
     """
     # Preprocess all images
     inputs = processor.image_processor(images=images, return_tensors="pt")
@@ -92,6 +55,28 @@ def get_llava_image_features(images, model, processor, avg_pool=False, device="c
     return mean_features  # shape: [B, D]
 
 
+def get_qwen_image_features(images, model, processor, device="cuda"):
+    """
+    Extract Qwen image features from a batch of images.
+    Args:
+        images: List of PIL images
+        model: Qwen2_5_VLForConditionalGeneration
+        processor: AutoProcessor
+        device: "cuda" or "cpu"
+    Returns:
+        Tensor of shape [B, N_tokens, D]
+    """
+    B = len(images)
+    inputs = processor.image_processor(images=images, return_tensors="pt")
+    pixel_values = inputs["pixel_values"].to(device)      
+    image_grid_thw = inputs["image_grid_thw"].to(device)        
+
+    pixel_values = pixel_values.type(model.visual.dtype)
+    image_embeds = model.visual(pixel_values, grid_thw=image_grid_thw)
+    image_embeds = image_embeds.view(B, image_embeds.shape[0] // B, -1)
+    return image_embeds
+
+
 def get_llava_inputs(inputs, model, image_features, device="cuda"):
     """
     Prepare inputs for LLaVA model using precomputed image features.
@@ -123,31 +108,57 @@ def get_llava_inputs(inputs, model, image_features, device="cuda"):
     return inputs
 
 
+def get_qwen_inputs(inputs, model, image_embeds, device="cuda"):
+    """
+    Prepare inputs for Qwen model using precomputed image features.
+    Args:
+        inputs: Preprocessed inputs from AutoProcessor
+        model: Qwen2_5_VLForConditionalGeneration
+        image_embeds: Precomputed image features
+    Returns:
+        Dict: Inputs ready for model.forward()
+    """
+
+    inputs_embeds = model.model.embed_tokens(inputs['input_ids'])
+    n_image_tokens = (inputs['input_ids'] == model.config.image_token_id).sum().item()
+    n_image_features = image_embeds.shape[0]
+    if n_image_tokens != n_image_features:
+        raise ValueError(
+            f"Image features and image tokens do not match: tokens: {n_image_tokens}, features {n_image_features}"
+        )
+    mask = inputs['input_ids'] == model.config.image_token_id
+    mask_unsqueezed = mask.unsqueeze(-1)
+    mask_expanded = mask_unsqueezed.expand_as(inputs_embeds)
+    image_mask = mask_expanded.to(inputs_embeds.device)
+
+    image_embeds = image_embeds.to(inputs_embeds.device, inputs_embeds.dtype)
+    inputs_embeds = inputs_embeds.masked_scatter(image_mask, image_embeds)
+
+    inputs['inputs_embeds'] = inputs_embeds
+    inputs['pixel_values'] = None
+
+    return inputs
+
+    
+
 def get_model_inputs(model_name, inputs, model, image_features, device="cuda"):
     if model_name == "llava":
         return get_llava_inputs(inputs, model, image_features, device=device)
     elif model_name == "qwen":
-        pass
+        return get_qwen_inputs(inputs, model, image_features, device=device)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
 
-def get_target_dim(model_name):
-    """
-    Get the target dimension for the projector based on the model name.
-    
-    Args:
-        model_name: Name of the model (e.g., "llava", "qwen")
-    
-    Returns:
-        int: Target dimension for the projector
-    """
+def get_model_image_features(model_name, images, model, processor, device="cuda"):
     if model_name == "llava":
-        return 4096  # LLaVA feature dimension
+        return get_llava_image_features(images, model, processor, device=device)
     elif model_name == "qwen":
-        return 3584  # Qwen feature dimension
+        return get_qwen_image_features(images, model, processor, device=device)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
+
+
 
 def llava_image_size_to_num_patches(image_size, grid_pinpoints, patch_size: int):
     """
@@ -211,7 +222,9 @@ def get_model(model_name, cache_path):
         model = LlavaNextForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
         model.generation_config.pad_token_id = model.generation_config.eos_token_id
     elif model_name == "qwen":
-        pass
+        model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
+        processor = AutoProcessor.from_pretrained(model_id, cache_dir=cache_path)
+        model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     return model, processor
@@ -273,7 +286,7 @@ def get_num_tokens(model_name):
     if model_name == "llava":
         return 1176, 4096
     elif model_name == "qwen":
-        return 64, 4096
+        return 144, 3584
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
