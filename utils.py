@@ -271,8 +271,8 @@ def get_model(model_name, cache_path):
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
     elif model_name == "llama":
         model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-        processor = AutoProcessor.from_pretrained(model_id, token="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")
-        model = MllamaForConditionalGeneration.from_pretrained(model_id,token = "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", torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
+        processor = AutoProcessor.from_pretrained(model_id)
+        model = MllamaForConditionalGeneration.from_pretrained(model_id,, torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     return model, processor
