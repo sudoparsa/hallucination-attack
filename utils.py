@@ -1,5 +1,5 @@
 import torch
-from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration
+from transformers import LlavaNextProcessor, LlavaNextForConditionalGeneration, MllamaForConditionalGeneration
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
 import open_clip
 import random
@@ -54,6 +54,29 @@ def get_llava_image_features(images, model, processor, avg_pool=False, device="c
 
     return mean_features  # shape: [B, D]
 
+def get_llama_image_features(images, model, processor, device="cuda"):
+    """
+    Extract Llama image features from a batch of images.
+    Args:
+        images: List of PIL images
+        model: LlamaForConditionalGeneration
+        processor: LlamaProcessor
+        device: "cuda" or "cpu"
+    Returns:
+        Tensor of shape [B, N_tokens, D]
+    """
+    inputs = processor.image_processor(images=images, return_tensors="pt")
+    vision_outputs = model.vision_model(
+        pixel_values=inputs['pixel_values'].to(device),
+        aspect_ratio_ids=inputs['aspect_ratio_ids'].to(device),
+        aspect_ratio_mask=inputs['aspect_ratio_mask'].to(device),
+        )
+    cross_attention_states = vision_outputs.last_hidden_state 
+    print(f"cross_attention_states shape: {cross_attention_states.shape}")
+    cross_attention_states = model.model.multi_modal_projector(cross_attention_states).reshape(
+    -1, cross_attention_states.shape[-2]*cross_attention_states.shape[-3], model.model.hidden_size)
+    print(f"cross_attention_states shape: {cross_attention_states.shape}")
+    return  cross_attention_states
 
 def get_qwen_image_features(images, model, processor, device="cuda"):
     """
@@ -139,15 +162,34 @@ def get_qwen_inputs(inputs, model, image_embeds, device="cuda"):
 
     return inputs
 
-    
+def get_llama_inputs(inputs, model, image_features, max_num_tokens=1,device="cuda"):
+    """
+    Prepare inputs for LLamA model using precomputed image features.
 
-def get_model_inputs(model_name, inputs, model, image_features, device="cuda"):
+    Args:
+        inputs: Preprocessed inputs from LlamaProcessor
+        model: LlamaForConditionalGeneration
+        image_features: Precomputed image features
+
+    Returns:
+        Dict: Inputs ready for model.forward()
+    """
+    inputs['cross_attention_states'] = image_features
+    cross_attention_mask = inputs['cross_attention_mask']
+    inputs['cross_attention_mask'] = cross_attention_mask.repeat(1,1,1,max_num_tokens)
+    inputs['pixel_values'] = None
+    return inputs
+
+def get_model_inputs(model_name, inputs, model, image_features, max_num_tokens=1, device="cuda"):
     if model_name == "llava":
         return get_llava_inputs(inputs, model, image_features, device=device)
     elif model_name == "qwen":
         return get_qwen_inputs(inputs, model, image_features, device=device)
+    elif model_name == "llama":
+        return get_llama_inputs(inputs, model, image_features, max_num_tokens, device=device)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
+
 
 
 def get_model_image_features(model_name, images, model, processor, device="cuda"):
@@ -155,6 +197,8 @@ def get_model_image_features(model_name, images, model, processor, device="cuda"
         return get_llava_image_features(images, model, processor, device=device)
     elif model_name == "qwen":
         return get_qwen_image_features(images, model, processor, device=device)
+    elif model_name == "llama":
+         return get_llama_image_features(images, model, processor, device=device)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 
@@ -225,6 +269,10 @@ def get_model(model_name, cache_path):
         model_id = "Qwen/Qwen2.5-VL-7B-Instruct"
         processor = AutoProcessor.from_pretrained(model_id, cache_dir=cache_path)
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
+    elif model_name == "llama":
+        model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+        processor = AutoProcessor.from_pretrained(model_id, token="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")
+        model = MllamaForConditionalGeneration.from_pretrained(model_id,token = "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", torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     return model, processor
@@ -287,6 +335,8 @@ def get_num_tokens(model_name):
         return 1176, 4096
     elif model_name == "qwen":
         return 144, 3584
+    elif model_name == "llama":
+        return 4*1601, 4096
     else:
         raise ValueError(f"Unknown model name: {model_name}")
 

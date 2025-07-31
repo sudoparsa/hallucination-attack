@@ -1,0 +1,7 @@
+torch
+transformers
+diffusers
+open-clip-torch
+numpy
+einops 
+torchvision

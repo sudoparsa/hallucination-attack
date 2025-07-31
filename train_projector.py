@@ -17,7 +17,7 @@ def get_args():
     parser = argparse.ArgumentParser()
 
     # Paths
-    parser.add_argument("--model_name", type=str, default="llava", choices=["qwen", "llava"], help="model name")
+    parser.add_argument("--model_name", type=str, default="llava", choices=["qwen", "llava","llama"], help="model name")
     parser.add_argument("--coco_dir", type=str, default="/fs/cml-datasets/coco/images")
     parser.add_argument("--cache_path", type=str, default="/fs/nexus-scratch/phoseini/cache/huggingface/hub")
     parser.add_argument("--save_projector_dir", type=str, default="./projector/models")
