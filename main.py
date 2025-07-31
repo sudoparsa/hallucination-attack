@@ -20,10 +20,14 @@ def get_args():
     parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset")
     parser.add_argument("--cache_path", type=str, default="/fs/nexus-scratch/phoseini/cache/huggingface/hub", help="Path to cache directory for HF models")
     parser.add_argument("--output_dir", type=str, default="./output", help="Directory to save generated images")
-    parser.add_argument("--target_object", type=str, required=True, choices=["boat"], help="Target object for the attack")
+    parser.add_argument("--target_object", type=str, required=True, help="Target object for the attack")
+
+    # Attack parameters
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size for inference")
-    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate for the attack")
-    parser.add_argument("--num_steps", type=int, default=20, help="Number of optimization steps")
+    parser.add_argument("--lr", type=float, default=1e-1, help="Learning rate for the attack")
+    parser.add_argument("--num_steps", type=int, default=100, help="Number of optimization steps")
+    parser.add_argument("--lambda_contrast", type=float, default=5.0, help="Encourages contrast against the target object in embedding space")
+    parser.add_argument("--lambda_reg", type=float, default=5.0, help="Regularization term for the embedding space")
 
     # Others
     parser.add_argument("--seed", type=int, default=42, help="Seed")
@@ -31,7 +35,7 @@ def get_args():
     return parser.parse_args()
 
 def get_log_name(args):
-    return f"{args.model_name}_{''.join(os.path.basename(args.projector_path).split('.')[:-1])}"
+    return f"{args.target_object}_lr={args.lr}_steps={args.num_steps}_lambda_contrast={args.lambda_contrast}_lambda_reg={args.lambda_reg}_{''.join(os.path.basename(args.projector_path).split('.')[:-1])}"
 
 def attack(args):
     logger.info("Loading model...")
@@ -53,6 +57,7 @@ def attack(args):
     projector = TokenMLP(num_tokens=num_tokens, context_dim=context_dim, clip_dim=1024, hidden_dim=hidden_dim, target_dim=target_dim)
     projector.load_state_dict(checkpoint)
     projector.eval().cuda()
+    logger.info(f"Projector loaded from {args.projector_path} with context_dim={context_dim}, hidden_dim={hidden_dim}, target_dim={target_dim}")
 
     logger.info("Loading Diffusion Model...")
     pipe = get_diffusion_model(args.cache_path)
@@ -72,15 +77,20 @@ def attack(args):
     text_tokens = tokenizer(args.target_object).to('cuda')
 
     logger.info(subprocess.check_output("nvidia-smi", text=True))
-
+    asr = 0
+    total_images_generated = 0
+    total_images_optimized = 0
     for i, img_id in enumerate(cat_spur_all):
+        total_images_optimized += 1
+        if i >= 100:  # Limit to first 10 images for debugging
+            break
         img_id = cat_spur_all[i]
         image, path = dset[img_id]
-        logger.info(f"Processing image {i+1}/{len(cat_spur_all)} id={img_id}: {path}")
+        logger.info(f"Processing image {i}/{len(cat_spur_all)} id={img_id}: {path}")
 
         prompt = random.choice(prompts)
-        output = get_vllm_output(model, processor, prompt, image, max_new_tokens=128)
-        logger.info(f"Prompt: {prompt} \nOutput: {output}")
+        # output = get_vllm_output(model, processor, prompt, image, max_new_tokens=128)
+        # logger.info(f"Prompt: {prompt} \nOutput: {output}")
         
         clip_emb = get_clip_image_features([image], clip_model, clip_preprocess)
         clip_emb = nn.Parameter(clip_emb).cuda()
@@ -108,7 +118,7 @@ def attack(args):
             sim1 = F.cosine_similarity(clip_emb, text_embedding)
             sim2 = F.mse_loss(clip_emb, clip_emb_initial)
 
-            loss = log_prob_yes + 5 * sim1 + 5 * sim2
+            loss = log_prob_yes + args.lambda_contrast * sim1 + args.lambda_reg * sim2
 
             pbar.set_postfix({"Loss": loss.item(), "Prob Yes": prob_yes.item(), "Prob No": prob_no.item()})
             optimizer.zero_grad()
@@ -128,8 +138,9 @@ def attack(args):
             gen_no_prob = gen_probs[0, no_id].item()
             pbar.set_postfix({"Gen Yes Prob": gen_yes_prob, "Gen No Prob": gen_no_prob})
             
-            if gen_yes_prob > gen_no_prob:
+            if gen_yes_prob > 0.95:
                 # Generate image with diffusion model
+                logger.info(f"Step={step}: Generating image for path={path}, id={img_id}, loss={gen_yes_prob}")
                 result = pipe(
                 negative_prompt="low quality, ugly, unrealistic",
                 image_embeds=clip_emb.half(),
@@ -139,14 +150,22 @@ def attack(args):
                 torch.cuda.empty_cache()
 
                 output = get_vllm_output(model, processor, prompt, generated, max_new_tokens=128)
+                logger.info(f"Prompt: {prompt}")
+                logger.info(f"Output: {output}")
+                output_path = f"logs/attack/{args.model_name}/{get_log_name(args)}/images/{i}_{img_id}_{step}.png"
+                generated.save(output_path)
+                logger.info(f"Saved generated image to {output_path}")
                 if output.lower().startswith("yes"):
-                    logger.info(f"Step={step}: Generated image for path={path} , id={img_id}")
-                    logger.info(f"Prompt: {prompt}")
-                    logger.info(f"Output: {output}")
-                    output_path = f"logs/attack/{get_log_name(args)}/images/{i}_{img_id}.png"
-                    generated.save(output_path)
-                    logger.info(f"Saved generated image to {output_path}")
-                    continue
+                    logger.info(f"Attack successful for image {img_id} at step {step}")
+                    asr += 1
+                else:
+                    logger.info(f"Attack failed for image {img_id} at step {step}")
+                total_images_generated += 1
+                break
+            if step == args.num_steps - 1:
+                logger.info(f"Attack failed for image {img_id} after {args.num_steps} steps. Prob Yes: {gen_yes_prob}, Prob No: {gen_no_prob}")
+    
+    logger.info(f"Attack completed. Total images optimized: {total_images_generated}/{total_images_optimized} Total images generated: {asr}/{total_images_generated} ASR: {asr / total_images_generated if total_images_generated > 0 else 0:.2f} {total_images_generated/total_images_optimized}")
 
 
 
@@ -161,15 +180,16 @@ if __name__ == "__main__":
     # create folder
     os.makedirs(f"logs", exist_ok=True)
     os.makedirs(f"logs/attack", exist_ok=True)
-    os.makedirs(f"logs/attack/{get_log_name(args)}", exist_ok=True)
-    os.makedirs(f"logs/attack/{get_log_name(args)}/images", exist_ok=True)
+    os.makedirs(f"logs/attack/{args.model_name}", exist_ok=True)
+    os.makedirs(f"logs/attack/{args.model_name}/{get_log_name(args)}", exist_ok=True)
+    os.makedirs(f"logs/attack/{args.model_name}/{get_log_name(args)}/images", exist_ok=True)
 
     logging.basicConfig(format="### %(message)s ###")
 
     logger = logging.getLogger("HallucinationAttack")
     logger.setLevel(level=logging_level)
 
-    logger.addHandler(logging.FileHandler(f"logs/attack/{get_log_name(args)}/log.txt", mode='w'))
+    logger.addHandler(logging.FileHandler(f"logs/attack/{args.model_name}/{get_log_name(args)}/log.txt", mode='w'))
 
     # Setting Seed
     set_seed(args.seed)
