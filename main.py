@@ -23,11 +23,13 @@ def get_args():
     parser.add_argument("--target_object", type=str, required=True, help="Target object for the attack")
 
     # Attack parameters
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for inference")
     parser.add_argument("--lr", type=float, default=1e-1, help="Learning rate for the attack")
-    parser.add_argument("--num_steps", type=int, default=100, help="Number of optimization steps")
+    parser.add_argument("--num_steps", type=int, default=40, help="Number of optimization steps")
     parser.add_argument("--lambda_contrast", type=float, default=5.0, help="Encourages contrast against the target object in embedding space")
     parser.add_argument("--lambda_reg", type=float, default=5.0, help="Regularization term for the embedding space")
+    parser.add_argument("--num_generation", type=int, default=4, help="Number of images to generate per instance")
+    parser.add_argument("--threshold", type=float, default=0.99, help="Threshold for optimization")
+    parser.add_argument("--guidance_scale", type=float, default=10, help="Guidance scale for the diffusion model")
 
     # Others
     parser.add_argument("--seed", type=int, default=42, help="Seed")
@@ -35,7 +37,7 @@ def get_args():
     return parser.parse_args()
 
 def get_log_name(args):
-    return f"{args.target_object}_lr={args.lr}_steps={args.num_steps}_lambda_contrast={args.lambda_contrast}_lambda_reg={args.lambda_reg}_{''.join(os.path.basename(args.projector_path).split('.')[:-1])}"
+    return f"{args.target_object}_lr={args.lr}_steps={args.num_steps}_threshold={args.threshold}_num_generation={args.num_generation}_guidance_scale={args.guidance_scale}_lambda_contrast={args.lambda_contrast}_lambda_reg={args.lambda_reg}_{''.join(os.path.basename(args.projector_path).split('.')[:-1])}"
 
 def attack(args):
     logger.info("Loading model...")
@@ -82,11 +84,11 @@ def attack(args):
     total_images_optimized = 0
     for i, img_id in enumerate(cat_spur_all):
         total_images_optimized += 1
-        if i >= 100:  # Limit to first 10 images for debugging
+        if i >= 1000:  # Limit to first 10 images for debugging
             break
         img_id = cat_spur_all[i]
         image, path = dset[img_id]
-        logger.info(f"Processing image {i}/{len(cat_spur_all)} id={img_id}: {path}")
+        logger.info(f"##### Processing image {i}/{len(cat_spur_all)} id={img_id}: {path} #####")
 
         prompt = random.choice(prompts)
         # output = get_vllm_output(model, processor, prompt, image, max_new_tokens=128)
@@ -138,34 +140,38 @@ def attack(args):
             gen_no_prob = gen_probs[0, no_id].item()
             pbar.set_postfix({"Gen Yes Prob": gen_yes_prob, "Gen No Prob": gen_no_prob})
             
-            if gen_yes_prob > 0.95:
-                # Generate image with diffusion model
-                logger.info(f"Step={step}: Generating image for path={path}, id={img_id}, loss={gen_yes_prob}")
-                result = pipe(
-                negative_prompt="low quality, ugly, unrealistic",
-                image_embeds=clip_emb.half(),
-                guidance_scale=10
-                )
-                generated = result.images[0]
-                torch.cuda.empty_cache()
+            if gen_yes_prob > args.threshold:
+                attack_success = False
+                for g in range(args.num_generation):
+                    # Generate image with diffusion model
+                    logger.info(f"Step={step}, Gen={g}: Generating image for path={path}, id={img_id}, Yes Prob={gen_yes_prob}")
+                    result = pipe(
+                    negative_prompt="low quality, ugly, unrealistic",
+                    image_embeds=clip_emb.half(),
+                    guidance_scale=args.guidance_scale,
+                    )
+                    total_images_generated += 1
+                    generated = result.images[0]
+                    torch.cuda.empty_cache()
 
-                output = get_vllm_output(model, processor, prompt, generated, max_new_tokens=128)
-                logger.info(f"Prompt: {prompt}")
-                logger.info(f"Output: {output}")
-                output_path = f"logs/attack/{args.model_name}/{get_log_name(args)}/images/{i}_{img_id}_{step}.png"
-                generated.save(output_path)
-                logger.info(f"Saved generated image to {output_path}")
-                if output.lower().startswith("yes"):
-                    logger.info(f"Attack successful for image {img_id} at step {step}")
-                    asr += 1
-                else:
-                    logger.info(f"Attack failed for image {img_id} at step {step}")
-                total_images_generated += 1
+                    output = get_vllm_output(model, processor, prompt, generated, max_new_tokens=128)
+                    if output.lower().startswith("yes"):
+                        logger.info(f"Attack successful for image {img_id} at step {step}")
+                        logger.info(f"Prompt: {prompt}")
+                        logger.info(f"Output: {output}")
+                        output_path = f"logs/attack/{args.model_name}/{get_log_name(args)}/images/{i}_{img_id}_{step}.png"
+                        generated.save(output_path)
+                        logger.info(f"Saved generated image to {output_path}")
+                        asr += 1
+                        attack_success = True
+                        break
+                if not attack_success:
+                    logger.info(f"Attack FAILED for image {img_id} at step {step}")
                 break
             if step == args.num_steps - 1:
-                logger.info(f"Attack failed for image {img_id} after {args.num_steps} steps. Prob Yes: {gen_yes_prob}, Prob No: {gen_no_prob}")
+                logger.info(f"Attack FAILED for image {img_id} after {args.num_steps} steps. Prob Yes: {gen_yes_prob}, Prob No: {gen_no_prob}")
     
-    logger.info(f"Attack completed. Total images optimized: {total_images_generated}/{total_images_optimized} Total images generated: {asr}/{total_images_generated} ASR: {asr / total_images_generated if total_images_generated > 0 else 0:.2f} {total_images_generated/total_images_optimized}")
+    logger.info(f"Attack completed. Total images optimized: {total_images_optimized} Total images generated: {total_images_generated} Total Images Successful: {asr / total_images_generated if total_images_generated > 0 else 0:.2f} {total_images_generated/total_images_optimized}")
 
 
 
