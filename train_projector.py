@@ -109,13 +109,13 @@ def train_projector(args):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            total_tr_loss += loss.item()
-            pbar.set_postfix({"loss": loss.item(), "total_loss": total_tr_loss / (i + 1)})
-            epoch_losses.append(loss.item())
+            if not torch.isinf(torch.tensor(loss.item())):
+                epoch_losses.append(loss.item())
+                total_tr_loss += loss.item()
+                pbar.set_postfix({"loss": loss.item(), "total_loss": total_tr_loss / (i + 1)})
         avg_train_loss = total_tr_loss / len(train_loader)
         logger.info(f"Epoch {epoch} - Train Loss: {sum(epoch_losses) / len(epoch_losses)}")
         train_losses.append(avg_train_loss)
-
         total_val_loss = 0.0
         decoder.eval()
         pbar = tqdm(val_loader, desc=f"Validating epoch {epoch}")
@@ -131,7 +131,8 @@ def train_projector(args):
                 # target_sample = tokens_l[batch_idx, token_idx]   # [B, 32, D]
                 # val_loss = criterion(pred_sample, target_sample)
                 val_loss = criterion(pred_tokens, tokens_l)
-                total_val_loss += val_loss.item()
+                if not torch.isinf(torch.tensor(val_loss.item())):
+                    total_val_loss += val_loss.item()
             
             pbar.set_postfix({"val_loss": val_loss.item(), "total_val_loss": total_val_loss / (i + 1)})
         

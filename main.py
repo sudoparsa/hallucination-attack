@@ -15,7 +15,7 @@ import subprocess
 
 def get_args():
     parser = argparse.ArgumentParser(description="Hallucination Adversarial Attack")
-    parser.add_argument("--model_name", type=str, required=True, choices=["llava", "qwen"], help="Name of the victim model")
+    parser.add_argument("--model_name", type=str, required=True, choices=["llava", "qwen", "llama"], help="Name of the victim model")
     parser.add_argument("--projector_path", type=str, required=True, help="Path to the projector checkpoint")
     parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset")
     parser.add_argument("--cache_path", type=str, default="/fs/nexus-scratch/phoseini/cache/huggingface/hub", help="Path to cache directory for HF models")
@@ -50,8 +50,8 @@ def attack(args):
     context_dim = re.search(r"context_dim=(\d+)", args.projector_path)
     hidden_dim = re.search(r"hidden_dim=(\d+)", args.projector_path)
 
-    context_dim = int(context_dim.group(1)) if context_dim else None
-    hidden_dim = int(hidden_dim.group(1)) if hidden_dim else None
+    context_dim = int(context_dim.group(1)) if context_dim else 4096
+    hidden_dim = int(hidden_dim.group(1)) if hidden_dim else 4096
 
     checkpoint = torch.load(args.projector_path, map_location='cpu')
     projector = TokenMLP(num_tokens=num_tokens, context_dim=context_dim, clip_dim=1024, hidden_dim=hidden_dim, target_dim=target_dim)
@@ -104,7 +104,10 @@ def attack(args):
             image_features = projector(clip_emb).half().squeeze(0)  # [num_tokens, target_dim]
             inputs = vllm_standard_preprocessing(processor, prompt, image)
             inputs = get_model_inputs(args.model_name, inputs, model, image_features)
-            inputs['input_ids'] = None
+            
+            if arg.model_name != "llama":
+                inputs['input_ids'] = None
+
             logits = model(**inputs).logits.float()
             logits_step = logits[:, -1, :]
             probs = torch.softmax(logits_step, dim=-1)

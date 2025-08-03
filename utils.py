@@ -41,18 +41,11 @@ def get_llava_image_features(images, model, processor, avg_pool=False, device="c
         image_features,
         image_sizes=image_sizes,
         vision_feature_select_strategy=vision_feature_select_strategy,
-        image_newline=model.image_newline,
+        image_newline=model.model.image_newline,
     )
 
-    # Use `feature_lens` to split
-    split_features = torch.split(image_features, list(feature_lens), dim=0)
 
-    if not avg_pool:
-        return torch.stack([f for f in split_features], dim=0)  # shape: [B, N_tokens, D]
-
-    mean_features = torch.stack([f.mean(dim=0) for f in split_features], dim=0)  # [B, D]
-
-    return mean_features  # shape: [B, D]
+    return image_features  # shape: [B, D]
 
 def get_llama_image_features(images, model, processor, device="cuda"):
     """
@@ -72,10 +65,8 @@ def get_llama_image_features(images, model, processor, device="cuda"):
         aspect_ratio_mask=inputs['aspect_ratio_mask'].to(device),
         )
     cross_attention_states = vision_outputs.last_hidden_state 
-    print(f"cross_attention_states shape: {cross_attention_states.shape}")
     cross_attention_states = model.model.multi_modal_projector(cross_attention_states).reshape(
     -1, cross_attention_states.shape[-2]*cross_attention_states.shape[-3], model.model.hidden_size)
-    print(f"cross_attention_states shape: {cross_attention_states.shape}")
     return  cross_attention_states
 
 def get_qwen_image_features(images, model, processor, device="cuda"):
@@ -127,6 +118,7 @@ def get_llava_inputs(inputs, model, image_features, device="cuda"):
 
     inputs['inputs_embeds'] = inputs_embeds
     inputs['pixel_values'] = None
+    
 
     return inputs
 
@@ -142,7 +134,7 @@ def get_qwen_inputs(inputs, model, image_embeds, device="cuda"):
         Dict: Inputs ready for model.forward()
     """
 
-    inputs_embeds = model.model.embed_tokens(inputs['input_ids'])
+    inputs_embeds = model.get_input_embeddings()(inputs['input_ids'])
     n_image_tokens = (inputs['input_ids'] == model.config.image_token_id).sum().item()
     n_image_features = image_embeds.shape[0]
     if n_image_tokens != n_image_features:
@@ -159,6 +151,7 @@ def get_qwen_inputs(inputs, model, image_embeds, device="cuda"):
 
     inputs['inputs_embeds'] = inputs_embeds
     inputs['pixel_values'] = None
+    
 
     return inputs
 
@@ -178,6 +171,7 @@ def get_llama_inputs(inputs, model, image_features, max_num_tokens=1,device="cud
     cross_attention_mask = inputs['cross_attention_mask']
     inputs['cross_attention_mask'] = cross_attention_mask.repeat(1,1,1,max_num_tokens)
     inputs['pixel_values'] = None
+   
     return inputs
 
 def get_model_inputs(model_name, inputs, model, image_features, max_num_tokens=1, device="cuda"):
@@ -271,8 +265,8 @@ def get_model(model_name, cache_path):
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
     elif model_name == "llama":
         model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-        processor = AutoProcessor.from_pretrained(model_id)
-        model = MllamaForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
+        processor = AutoProcessor.from_pretrained(model_id,token="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")
+        model = MllamaForConditionalGeneration.from_pretrained(model_id, token="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",  torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     return model, processor
