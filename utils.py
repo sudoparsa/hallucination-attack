@@ -30,22 +30,17 @@ def get_llava_image_features(images, model, processor, avg_pool=False, device="c
     vision_feature_layer = model.config.vision_feature_layer
     vision_feature_select_strategy = model.config.vision_feature_select_strategy
 
-    image_features = model.get_image_features(
+    image_features = model.model.get_image_features(
         pixel_values=pixel_values,
         image_sizes=image_sizes,
         vision_feature_layer=vision_feature_layer,
         vision_feature_select_strategy=vision_feature_select_strategy,
     )
 
-    image_features, feature_lens = model.pack_image_features(
-        image_features,
-        image_sizes=image_sizes,
-        vision_feature_select_strategy=vision_feature_select_strategy,
-        image_newline=model.model.image_newline,
-    )
 
 
-    return image_features  # shape: [B, D]
+
+    return torch.stack(image_features)  # shape: [B, D]
 
 def get_llama_image_features(images, model, processor, device="cuda"):
     """
@@ -265,8 +260,8 @@ def get_model(model_name, cache_path):
         model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, torch_dtype=torch.float16, low_cpu_mem_usage=True, cache_dir=cache_path)
     elif model_name == "llama":
         model_id = "meta-llama/Llama-3.2-11B-Vision-Instruct"
-        processor = AutoProcessor.from_pretrained(model_id''',token=""''')
-        model = MllamaForConditionalGeneration.from_pretrained(model_id, '''token="",'''  torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
+        processor = AutoProcessor.from_pretrained(model_id,token="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")
+        model = MllamaForConditionalGeneration.from_pretrained(model_id, token="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",  torch_dtype=torch.float16,device_map="auto", low_cpu_mem_usage=True, cache_dir=cache_path)
     else:
         raise ValueError(f"Unknown model name: {model_name}")
     return model, processor
@@ -346,12 +341,12 @@ def get_diffusion_model(cache_path):
 
 def get_prompt_templates():
     templates = [
-        "Do you see a {obj} in the image?",
-        "Is there a {obj} here?",
-        "Does the image contain a {obj}?",
-        "Can you find a {obj} in this picture?",
-        "Would you say there's a {obj} here?",
-        "Is a {obj} present in this image?",
+        "Do you see a {obj} in the image? Answer with 'Yes' or 'No'.",
+        "Is there a {obj} here? Answer with 'Yes' or 'No'.",
+        "Does the image contain a {obj}? Answer with 'Yes' or 'No'.",
+        "Can you find a {obj} in this picture? Answer with 'Yes' or 'No'.",
+        "Would you say there's a {obj} here? Answer with 'Yes' or 'No'.",
+        "Is a {obj} present in this image? Answer with 'Yes' or 'No'.",
         ]
     return templates
 
