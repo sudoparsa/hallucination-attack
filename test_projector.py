@@ -29,6 +29,12 @@ def get_args():
 def get_log_name(args):
     return f"{args.target_objects}_{''.join(os.path.basename(args.projector_path).split('.')[:-1])}"
 
+def get_probabilities(inputs,model):
+    logits = model(**inputs).logits.float()
+    logits_step = logits[:, -1, :]
+    probs = torch.softmax(logits_step, dim=-1)
+
+    return probs
 def test(args):
     logger.info("Loading model...")
     model, processor = get_model(args.model_name, args.cache_path)
@@ -53,6 +59,13 @@ def test(args):
     logger.info("Loading Dataset...")
     dset = COCO(args.data_path, split='train', transform=(336, 336))
     present = [x  for cat in dset.get_all_supercategories() for x in dset.get_categories(cat) ]
+    accurecies_p_n = {}
+    accurecies_p_y = {}
+    accurecis_mllm_n = {}
+    accurecis_mllm_y = {}
+    probs_all_yes = {}
+    prob_all_no = {}
+
     for target_object in args.target_objects.split(','):
         cat_spur_all = dset.get_imgIds_by_class(present_classes=present, absent_classes=[target_object])
         logger.info(f"Number of images without {target_object}: {len(cat_spur_all)}")
@@ -66,6 +79,9 @@ def test(args):
 
         correct_p = 0
         correct_mllm = 0
+        probs_yes = 0
+        probs_no = 0
+
         total = 0
 
         for i, img_id in enumerate(tqdm(cat_spur_all[:100])):  # Evaluate only first 100 images
@@ -80,19 +96,23 @@ def test(args):
             # Prepare input and generate
             inputs = vllm_standard_preprocessing(processor, prompt, image)
             inputs = get_model_inputs(args.model_name, inputs, model, image_features)
-            output = model.generate(**inputs, max_new_tokens=1)
-            generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, output)]
-            decoded_p = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )[0]
-            if "no" in decoded_p.lower():
+            #output = model(**inputs)
+            probs = get_probabilities(inputs, model)
+            prob_no = probs[0, no_id].item()
+            prob_yes = probs[0, yes_id].item()
+            probs_no += prob_no
+            
+            if prob_no > prob_yes:
                 correct_p += 1
+                decoded_p = 'No'
+            else:
+                decoded_p = 'Yes'
 
             decoded_m = get_vllm_output(model, processor, prompt, image, max_new_tokens=1)
             if "no" in decoded_m.lower():
                 correct_mllm += 1
 
-            logger.info(f"[{i}] Prompt: '{prompt}' | Output projector: '{decoded_p}' | Output MLLM: '{decoded_m}'")
+            logger.info(f"[{i}] Prompt: '{prompt}' | Output projector: '{decoded_p}'| Probabilities: No={prob_no:.4f}, Yes={prob_yes:.4f} | Output MLLM: '{decoded_m}' ")
             
             total += 1
 
@@ -100,7 +120,8 @@ def test(args):
         logger.info(f"Object: {target_object} | Accuracy: {acc_p:.2f}% ({correct_p}/{total})")
         acc_mllm = correct_mllm / total * 100
         logger.info(f"Object: {target_object} | MLLM Accuracy: {acc_mllm:.2f}% ({correct_mllm}/{total})")
-        
+        accurecies_p_n[target_object] = acc_p
+        accurecis_mllm_n[target_object] = acc_mllm
 
         correct_p = 0
         correct_mllm = 0
@@ -120,15 +141,18 @@ def test(args):
             # Prepare input and generate
             inputs = vllm_standard_preprocessing(processor, prompt, image)
             inputs = get_model_inputs(args.model_name, inputs, model, image_features)
-            output = model.generate(**inputs, max_new_tokens=1)
-            generated_ids_trimmed = [out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, output)]
-            decoded_p = processor.batch_decode(
-                generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
-            )[0]
-            
+            #output = model(**inputs)
+            probs = get_probabilities(inputs, model)
+            prob_no = probs[0, no_id].item()
+            prob_yes = probs[0, yes_id].item()
+            probs_yes += prob_yes
 
-            if "yes" in decoded_p.lower():
+
+            if prob_yes > prob_no:
+                decoded_p = 'Yes'
                 correct_p += 1
+            else:
+                decoded_p = 'No'
             
 
             decoded_m = get_vllm_output(model, processor, prompt, image, max_new_tokens=1)
@@ -136,7 +160,7 @@ def test(args):
             if "yes" in decoded_m.lower():
                 correct_mllm += 1
 
-            logger.info(f"[{i}] Prompt: '{prompt}' | Output projector: '{decoded_p}' | Output MLLM: '{decoded_m}'")
+            logger.info(f"[{i}] Prompt: '{prompt}' | Output projector: '{decoded_p}' | | Probabilities: No={prob_no:.4f}, Yes={prob_yes:.4f} | Output MLLM: '{decoded_m}'")
             
 
             total += 1
@@ -145,7 +169,38 @@ def test(args):
         logger.info(f"Object: {target_object} | Accuracy: {acc_p:.2f}% ({correct_p}/{total})")
         acc_mllm = correct_mllm / total * 100
         logger.info(f"Object: {target_object} | MLLM Accuracy: {acc_mllm:.2f}% ({correct_mllm}/{total})")
+        accurecies_p_y[target_object] = acc_p
+        accurecis_mllm_y[target_object] = acc_mllm
+        probs_all_yes[target_object] = probs_yes / total
+        prob_all_no[target_object] = probs_no / total
+    
+    
+    for target_object in args.target_objects.split(','):
+        logger.info(f"Final Accuracies for Projector ({target_object} No): {accurecies_p_n[target_object]}")
+        logger.info(f"Final Accuracies for Projector ({target_object} Yes): {accurecies_p_y[target_object]}")
+        logger.info(f"Final Accuracies for Projector ({target_object}): {(accurecies_p_n[target_object] + accurecies_p_y[target_object]) / 2}")
+        logger.info(f"Final Probabilities for Projector ({target_object} No): {prob_all_no[target_object]}")
+        logger.info(f"Final Probabilities for Projector ({target_object} Yes): {probs_all_yes[target_object]}")
+        logger.info(f"Final Accuracies for MLLM ({target_object} No): {accurecis_mllm_n[target_object]}")
+        logger.info(f"Final Accuracies for MLLM ({target_object} Yes): {accurecis_mllm_y[target_object]}")
+        logger.info(f"Final Accuracies for MLLM ({target_object}): {(accurecis_mllm_n[target_object] + accurecis_mllm_y[target_object]) / 2}")
 
+    mean_probs_yes = sum(probs_all_yes.values()) / len(probs_all_yes)
+    mean_probs_no = sum(prob_all_no.values()) / len(prob_all_no)
+    logger.info(f"Mean Probabilities for Projector (Yes): {mean_probs_yes}")
+    logger.info(f"Mean Probabilities for Projector (No): {mean_probs_no}")
+    mean_acc_p_n = sum(accurecies_p_n.values()) / len(accurecies_p_n)
+    mean_acc_p_y = sum(accurecies_p_y.values()) / len(accurecies_p_y)
+    logger.info(f"Mean Accuracies for Projector (No): {mean_acc_p_n}")
+    logger.info(f"Mean Accuracies for Projector (Yes): {mean_acc_p_y}")
+    logger.info(f"Mean Accuracies for Projector: {(mean_acc_p_n + mean_acc_p_y) / 2}")  
+    mean_acc_mllm_n = sum(accurecis_mllm_n.values()) / len(accurecis_mllm_n)
+    mean_acc_mllm_y = sum(accurecis_mllm_y.values()) / len(accurecis_mllm_y)
+    logger.info(f"Mean Accuracies for MLLM (No): {mean_acc_mllm_n}")
+    logger.info(f"Mean Accuracies for MLLM (Yes): {mean_acc_mllm_y}")
+    logger.info(f"Mean Accuracies for MLLM: {(mean_acc_mllm_n + mean_acc_mllm_y) / 2}")
+    
+    
 
 
                 
