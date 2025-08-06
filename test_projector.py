@@ -11,6 +11,7 @@ import logging
 import matplotlib.pyplot as plt
 import re
 import subprocess
+import random
 
 
 def get_args():
@@ -68,6 +69,7 @@ def test(args):
 
     for target_object in args.target_objects.split(','):
         cat_spur_all = dset.get_imgIds_by_class(present_classes=present, absent_classes=[target_object])
+        random.shuffle(cat_spur_all)
         logger.info(f"Number of images without {target_object}: {len(cat_spur_all)}")
 
         prompts = get_prompt_templates()
